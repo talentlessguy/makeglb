@@ -1,322 +1,272 @@
 <html>
   <head>
-  <Title>Make glb</Title>
-  <style>
- .area {
-  width: 45em;
-  padding: 15px;
-  border: 1px solid #333;
-  background: rgba(0,0,0,0.7);
-}
-#drop_zone {
-  border: 2px dashed #bbb;
-  -webkit-border-radius: 5px;
-  border-radius: 5px;
-  padding: 50px;
-  text-align: center;
-  font: 21pt bold arial;
-  color: #bbb;
-}
-
-  </style>
+    <title>Make glb</title>
+    <style>
+      #drop_zone {
+        border: 2px dashed black;
+        padding: 50px;
+        text-align: center;
+        font: 21pt bold;
+        color: black;
+      }
+    </style>
   </head>
-<body>
-<div class="area">
-    <div id="drop_zone">Drop all files and folders for your glTF asset here</div>
-</div>
-<div id="download">
-    <a href="#" id="downloadLink"></a>
-</div>
-<div>
-    <ul id=list></ul></div>
-<script>
+  <body>
+    <div style="width: 30em;">
+      <div id="drop_zone">Drop all files and folders for your glTF asset here</div>
+    </div>
+    <div id="download">
+      <a href="#" id="downloadLink"></a>
+    </div>
+    <div>
+      <ul id="list"></ul>
+    </div>
+    <script>
+      const files = []
+      const fileblobs = []
+      let gltf
+      let remainingfilestoprocess = 0
+      let glbfilename
 
+      let outputBuffers
+      let bufferMap
+      let bufferOffset
 
-  var files=[];
-  var fileblobs=[];
-  var gltf;
-  var remainingfilestoprocess=0;
-  var glbfilename;
+      const dropZone = document.getElementById('drop_zone')
+      dropZone.addEventListener(
+        'dragover',
+        (e) => {
+          e.stopPropagation()
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+        },
+        false
+      )
+      dropZone.addEventListener('drop', handleFileSelect, false)
 
-  var outputBuffers;
-  var bufferMap;
-  var bufferOffset;
-
-
-  function handleDragOver(event) {
-    event.stopPropagation();
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'copy';
-  }
-
-
-  var dropZone = document.getElementById('drop_zone');
-  dropZone.addEventListener('dragover', handleDragOver, false);
-  dropZone.addEventListener('drop', handleFileSelect, false);
-
-
-  function addDownloadButton() {
-    var btn = document.createElement("button");
-    btn.id="downloadBtn";
-    btn.disabled=true;
-    btn.onclick= startDownload;
-    btn.appendChild(document.createTextNode("Processing..."));
-    document.getElementById("download").appendChild(btn);
-  }
-
-  function startDownload(){
-      document.getElementById("downloadLink").click();
-  }
-
-  function handleFileSelect(event) {
-    event.stopPropagation();
-    event.preventDefault();
-    document.getElementById('list').innerHTML="";
-    addDownloadButton();
-    var items = event.dataTransfer.items;
-    remainingfilestoprocess=items.length;
-    for (var i=0; i<items.length; i++) {
-      if (items[i].getAsEntry) {
-      var entry = items[i].getAsEntry();
-       } else if (items[i].webkitGetAsEntry) {
-       var entry = items[i].webkitGetAsEntry();
+      function addDownloadButton() {
+        const btn = document.createElement('button')
+        btn.id = 'downloadBtn'
+        btn.disabled = true
+        btn.onclick = () => document.getElementById('downloadLink').click()
+        btn.appendChild(document.createTextNode('Processing...'))
+        document.getElementById('download').appendChild(btn)
       }
-      if (entry) {
-          traverseFileTree(entry);
-      }
-    }
-  }
 
-  function traverseFileTree(item, path) {
-  path = path || "";
-  if (item.isFile) {
-    item.file(function(file) {
-        files.push(file);
-        var fileitem = '<li><strong>'+ escape(file.name)+ '</strong> ('+ file.type + ') - '+
-                  file.size+ ' bytes, last modified: '+ file.lastModifiedDate +
-                  '</li>';
-        document.getElementById('list').innerHTML += fileitem;
-
-        var extension = file.name.split('.').pop();
-        if ( extension === "gltf")
-          {
-            glbfilename=file.name.substr(file.name.lastIndexOf('/')+1,file.name.lastIndexOf('.'));
-          var reader = new FileReader();
-          reader.readAsText(file);
-          reader.onload = function(event) {
-            gltf = JSON.parse(event.target.result);
-            checkRemaining();
-            };
+      function handleFileSelect(e) {
+        e.stopPropagation()
+        e.preventDefault()
+        addDownloadButton()
+        const items = e.dataTransfer.items
+        remainingfilestoprocess = items.length
+        for (const item of items) {
+          const entry = item.getAsEntry ? item.getAsEntry() : item.webkitGetAsEntry()
+          if (entry) traverseFileTree(entry)
         }
-        else{
-          var reader = new FileReader();
-          reader.onload = (function(theFile) {
-          return function(e) {
-          fileblobs[theFile.name.toLowerCase()]=(e.target.result);
-          checkRemaining();
-          };
-        })(file);
-        reader.readAsArrayBuffer(file);
       }
-    },function(error){
-        console.log(error);
-    });
-  } else if (item.isDirectory) {
-    var dirReader = item.createReader();
-    dirReader.readEntries(function(entries) {
-        remainingfilestoprocess+=entries.length;
-        checkRemaining();
-      for (var i=0; i<entries.length; i++) {
-        traverseFileTree(entries[i], path + item.name + "/");
-      }
-    });
-  }
-}
 
-function checkRemaining(){
-    remainingfilestoprocess--;
-    if(remainingfilestoprocess===0){
-      outputBuffers = [];
-      bufferMap = new Map();
-      bufferOffset = 0;
-      processBuffers().then(fileSave);
-    }
-}
+      function traverseFileTree(item, path = '') {
+        if (item.isFile) {
+          item.file(
+            (file) => {
+              files.push(file)
 
-function processBuffers(){
-  var pendingBuffers = gltf.buffers.map(function (buffer, bufferIndex) {
-    return dataFromUri(buffer)
-      .then(function(data) {
-        if (data !== undefined) {
-          outputBuffers.push(data);
+              const extension = file.name.split('.').pop()
+              if (extension === 'gltf') {
+                glbfilename = file.name.substr(file.name.lastIndexOf('/') + 1, file.name.lastIndexOf('.'))
+                var reader = new FileReader()
+                reader.readAsText(file)
+                reader.onload = ({ target }) => {
+                  gltf = JSON.parse(target.result)
+                  checkRemaining()
+                }
+              } else {
+                var reader = new FileReader()
+                reader.onload = (({ name }) => ({ target }) => {
+                  fileblobs[name.toLowerCase()] = target.result
+                  checkRemaining()
+                })(file)
+                reader.readAsArrayBuffer(file)
+              }
+            },
+            (error) => console.log(error)
+          )
+        } else if (item.isDirectory) {
+          const dirReader = item.createReader()
+          dirReader.readEntries((entries) => {
+            remainingfilestoprocess += entries.length
+            checkRemaining()
+            for (const entry of entries) traverseFileTree(entry, `${path + item.name}/`)
+          })
         }
-        delete buffer.uri;
-        buffer.byteLength = data.byteLength;
-        bufferMap.set(bufferIndex, bufferOffset);
-        bufferOffset += alignedLength(data.byteLength);
-      });
-  });
+      }
 
-  return Promise.all(pendingBuffers)
-    .then(function() {
-        var bufferIndex = gltf.buffers.length;
-        var images = gltf.images || [];
-        var pendingImages = images.map(function (image) {
-          return dataFromUri(image).then(function(data) {
-            if (data === undefined) {
-                delete image['uri'];
-                return;
+      function checkRemaining() {
+        remainingfilestoprocess--
+        if (remainingfilestoprocess === 0) {
+          outputBuffers = []
+          bufferMap = new Map()
+          bufferOffset = 0
+          processBuffers().then(fileSave)
+        }
+      }
+
+      function processBuffers() {
+        const pendingBuffers = gltf.buffers.map((buffer, bufferIndex) =>
+          dataFromUri(buffer).then((data) => {
+            if (data !== undefined) outputBuffers.push(data)
+
+            buffer.byteLength = data.byteLength
+            bufferMap.set(bufferIndex, bufferOffset)
+            bufferOffset += alignedLength(data.byteLength)
+
+            return {
+              byteLength: data.byteLength
             }
-            var bufferView = {
+          })
+        )
+
+        return Promise.all(pendingBuffers).then(() => {
+          let bufferIndex = gltf.buffers.length
+          const images = gltf.images || []
+          const pendingImages = images.map((image) =>
+            dataFromUri(image).then((data) => {
+              if (!data) {
+                delete image.uri
+                return
+              }
+              const bufferView = {
                 buffer: 0,
                 byteOffset: bufferOffset,
-                byteLength: data.byteLength,
-            };
-            bufferMap.set(bufferIndex, bufferOffset);
-            bufferIndex++;
-            bufferOffset += alignedLength(data.byteLength);
-            var bufferViewIndex = gltf.bufferViews.length;
-            gltf.bufferViews.push(bufferView);
-            outputBuffers.push(data);
-            image['bufferView'] = bufferViewIndex;
-            image['mimeType'] = getMimeType(image.uri);
-            delete image['uri'];
-          });
-        });
-        return Promise.all(pendingImages);
-    });
-}
-
-function fileSave(){
-    var Binary = {
-        Magic: 0x46546C67
-    };
-
-    for (var _i = 0, _a = gltf.bufferViews; _i < _a.length; _i++) {
-        var bufferView = _a[_i];
-        if(bufferView.byteOffset=== undefined){
-            bufferView.byteOffset=0;
-        }
-        else{
-        bufferView.byteOffset = bufferView.byteOffset + bufferMap.get(bufferView.buffer);
+                byteLength: data.byteLength
+              }
+              bufferMap.set(bufferIndex, bufferOffset)
+              bufferIndex++
+              bufferOffset += alignedLength(data.byteLength)
+              const bufferViewIndex = gltf.bufferViews.length
+              gltf.bufferViews.push(bufferView)
+              outputBuffers.push(data)
+              image.bufferView = bufferViewIndex
+              image.mimeType = getMimeType(image.uri)
+              delete image.uri
+            })
+          )
+          return Promise.all(pendingImages)
+        })
       }
-        bufferView.buffer = 0;
-    }
-    var binBufferSize = bufferOffset;
-    gltf.buffers = [{
-        byteLength: binBufferSize
-    }];
 
-    var enc = new TextEncoder();
-    var jsonBuffer = enc.encode(JSON.stringify(gltf));
-    var jsonAlignedLength = alignedLength(jsonBuffer.length);
-    var padding;
-    if (jsonAlignedLength !== jsonBuffer.length) {
-
-        padding = jsonAlignedLength- jsonBuffer.length;
-    }
-    var totalSize = 12 + // file header: magic + version + length
-        8 + // json chunk header: json length + type
-        jsonAlignedLength +
-        8 + // bin chunk header: chunk length + type
-        binBufferSize;
-    var finalBuffer = new ArrayBuffer(totalSize);
-    var dataView = new DataView(finalBuffer);
-    var bufIndex = 0;
-    dataView.setUint32(bufIndex, Binary.Magic, true);
-    bufIndex += 4;
-    dataView.setUint32(bufIndex, 2, true);
-    bufIndex += 4;
-    dataView.setUint32(bufIndex, totalSize, true);
-    bufIndex += 4;
-    // JSON
-    dataView.setUint32(bufIndex, jsonAlignedLength, true);
-    bufIndex += 4;
-    dataView.setUint32(bufIndex, 0x4E4F534A, true);
-    bufIndex += 4;
-
-    for (var j=0;j<jsonBuffer.length;j++){
-        dataView.setUint8(bufIndex, jsonBuffer[j]);
-        bufIndex++;
-    }
-    if(padding!==undefined){
-        for (var j=0;j<padding;j++){
-            dataView.setUint8(bufIndex, 0x20);
-        bufIndex++;
-    }
-    }
-
-    // BIN
-    dataView.setUint32(bufIndex, binBufferSize, true);
-    bufIndex += 4;
-    dataView.setUint32(bufIndex, 0x004E4942, true);
-    bufIndex += 4;
-    for (var i = 0; i < outputBuffers.length; i++) {
-      var bufoffset = bufIndex + bufferMap.get(i);
-      var buf = new Uint8Array(outputBuffers[i]);
-      var thisbufindex=bufoffset;
-      for (var j=0;j<buf.byteLength;j++){
-        dataView.setUint8(thisbufindex, buf[j]);
-        thisbufindex++;
-    }
-    }
-    var a = document.getElementById("downloadLink");
-    var file = new Blob([finalBuffer],{type: 'model/json-binary'})
-    a.href = URL.createObjectURL(file);
-    a.download = glbfilename+".glb";
-    document.getElementById("downloadBtn").disabled=false;
-    document.getElementById("downloadBtn").textContent="Download .glb";
-    a.click();
-}
-
-
-function isBase64(uri) {
-    return uri.length < 5 ? false : uri.substr(0, 5) === "data:";
-}
-function decodeBase64(uri) {
-    return fetch(uri).then(function(response) { return response.arrayBuffer(); });
-}
-function dataFromUri(buffer) {
-    if (buffer.uri === undefined) {
-      return Promise.resolve(undefined);
-    } else if (isBase64(buffer.uri)) {
-      return decodeBase64(buffer.uri);
-    } else {
-      var filename=buffer.uri.substr(buffer.uri.lastIndexOf('/')+1);
-      return Promise.resolve(fileblobs[filename.toLowerCase()]);
-    }
-}
-function alignedLength(value) {
-    var alignValue = 4;
-    if (value == 0) {
-        return value;
-    }
-    var multiple = value % alignValue;
-    if (multiple === 0) {
-        return value;
-    }
-    return value + (alignValue - multiple);
-}
-
-function getMimeType(filename) {
-    for (var mimeType in gltfMimeTypes) {
-        for (var extensionIndex in gltfMimeTypes[mimeType]) {
-            var extension = gltfMimeTypes[mimeType][extensionIndex];
-            if (filename.toLowerCase().endsWith('.' + extension)) {
-                return mimeType;
-            }
+      function fileSave() {
+        for (let _i = 0, _a = gltf.bufferViews; _i < _a.length; _i++) {
+          const bufferView = _a[_i]
+          if (bufferView.byteOffset === undefined) {
+            bufferView.byteOffset = 0
+          } else {
+            bufferView.byteOffset = bufferView.byteOffset + bufferMap.get(bufferView.buffer)
+          }
+          bufferView.buffer = 0
         }
-    }
-    return 'application/octet-stream';
-}
+        const binBufferSize = bufferOffset
+        gltf.buffers = [
+          {
+            byteLength: binBufferSize
+          }
+        ]
 
-var gltfMimeTypes = {
-    'image/png': ['png'],
-    'image/jpeg': ['jpg', 'jpeg'],
-    'text/plain': ['glsl', 'vert', 'vs', 'frag', 'fs', 'txt'],
-    'image/vnd-ms.dds': ['dds']
-};
+        const enc = new TextEncoder()
+        const jsonBuffer = enc.encode(JSON.stringify(gltf))
+        const jsonAlignedLength = alignedLength(jsonBuffer.length)
+        let padding
+        if (jsonAlignedLength !== jsonBuffer.length) {
+          padding = jsonAlignedLength - jsonBuffer.length
+        }
+        const totalSize = 12 + 8 + jsonAlignedLength + 8 + binBufferSize
 
-</script>
-</body>
+        const finalBuffer = new ArrayBuffer(totalSize)
+        const dataView = new DataView(finalBuffer)
+        let bufIndex = 0
+        dataView.setUint32(bufIndex, 0x46546c67, true)
+        bufIndex += 4
+        dataView.setUint32(bufIndex, 2, true)
+        bufIndex += 4
+        dataView.setUint32(bufIndex, totalSize, true)
+        bufIndex += 4
+        // JSON
+        dataView.setUint32(bufIndex, jsonAlignedLength, true)
+        bufIndex += 4
+        dataView.setUint32(bufIndex, 0x4e4f534a, true)
+        bufIndex += 4
+
+        for (var j = 0; j < jsonBuffer.length; j++) {
+          dataView.setUint8(bufIndex, jsonBuffer[j])
+          bufIndex++
+        }
+        if (padding !== undefined) {
+          for (var j = 0; j < padding; j++) {
+            dataView.setUint8(bufIndex, 0x20)
+            bufIndex++
+          }
+        }
+
+        // BIN
+        dataView.setUint32(bufIndex, binBufferSize, true)
+        bufIndex += 4
+        dataView.setUint32(bufIndex, 0x004e4942, true)
+        bufIndex += 4
+        outputBuffers.map((buffer, i) => {
+          const bufoffset = bufIndex + bufferMap.get(i)
+          const buf = new Uint8Array(buffer)
+          let thisbufindex = bufoffset
+          for (let bufChunk of buf) {
+            dataView.setUint8(thisbufindex, bufChunk)
+            thisbufindex++
+          }
+        })
+
+        const a = document.getElementById('downloadLink')
+        const file = new Blob([finalBuffer], { type: 'model/json-binary' })
+        a.href = URL.createObjectURL(file)
+        a.download = `${glbfilename}.glb`
+        document.getElementById('downloadBtn').disabled = false
+        document.getElementById('downloadBtn').textContent = 'Download .glb'
+        a.click()
+      }
+
+      const isBase64 = (uri) => (uri.length < 5 ? false : uri.substr(0, 5) === 'data:')
+
+      const decodeBase64 = (uri) => fetch(uri).then((response) => response.arrayBuffer())
+
+      const dataFromUri = ({ uri }) => {
+        if (!uri) return Promise.resolve(undefined)
+        else if (isBase64(uri)) return decodeBase64(uri)
+        else return Promise.resolve(fileblobs[uri.substr(uri.lastIndexOf('/') + 1).toLowerCase()])
+      }
+
+      const alignedLength = (val) => {
+        const alignVal = 4
+        const multiple = val % alignVal
+        if (val == 0 || multiple == 0) {
+          return val
+        }
+        return val + (alignVal - multiple)
+      }
+
+      function getMimeType(filename) {
+        const gltfMimeTypes = {
+          'image/png': ['png'],
+          'image/jpeg': ['jpg', 'jpeg'],
+          'text/plain': ['glsl', 'vert', 'vs', 'frag', 'fs', 'txt'],
+          'image/vnd-ms.dds': ['dds']
+        }
+        for (const mimeType in gltfMimeTypes) {
+          for (const extensionIndex in gltfMimeTypes[mimeType]) {
+            const extension = gltfMimeTypes[mimeType][extensionIndex]
+            if (filename.toLowerCase().endsWith(`.${extension}`)) {
+              return mimeType
+            }
+          }
+        }
+        return 'application/octet-stream'
+      }
+    </script>
+  </body>
 </html>
